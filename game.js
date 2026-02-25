@@ -17,12 +17,16 @@ const CELL_H = PLAY_H / ROWS;
 
 const enemies = [];
 const defenders = [];
+const projectiles = [];
 
 const ENEMY_W = CELL_W * 0.7;
 const ENEMY_H = CELL_H * 0.7;
 
 const DEF_W = CELL_W * 0.75;
 const DEF_H = CELL_H * 0.75;
+
+const PEA_R = 6;
+const PEA_SPEED = 420;
 
 let spawnEvery = 1.8;
 let spawnTimer = 0;
@@ -38,6 +42,8 @@ const cardState = new Map(CARDS.map((c) => [c.id, { lastUsed: -Infinity }]));
 let selectedCardId = null;
 
 let lastTs = performance.now();
+
+const mouse = { x: 0, y: 0 };
 
 function rowCenterY(row) {
   return HUD_H + row * CELL_H + CELL_H / 2;
@@ -70,6 +76,7 @@ function spawnEnemy() {
     x: WIDTH + ENEMY_W / 2,
     y: rowCenterY(row),
     hp: 100,
+    maxHp: 100,
     speed: 55 + Math.random() * 20,
   });
 }
@@ -124,7 +131,14 @@ function placeDefender(cardId, row, col) {
   }
 
   if (cardId === "shooter") {
-    defenders.push({ ...base, hp: 140, maxHp: 140, fireRate: 1.0, lastShot: -Infinity });
+    defenders.push({
+      ...base,
+      hp: 140,
+      maxHp: 140,
+      fireRate: 1.0,
+      lastShot: -Infinity,
+      damage: 20,
+    });
     return true;
   }
 
@@ -181,7 +195,80 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") selectedCardId = null;
 });
 
-const mouse = { x: 0, y: 0 };
+function nearestEnemyInRowAhead(row, xMin) {
+  let best = null;
+  let bestX = Infinity;
+  for (const e of enemies) {
+    if (e.row !== row) continue;
+    if (e.x <= xMin) continue;
+    if (e.x < bestX) {
+      bestX = e.x;
+      best = e;
+    }
+  }
+  return best;
+}
+
+function updateDefenders(dt, t) {
+  for (const d of defenders) {
+    if (d.id !== "shooter") continue;
+
+    const target = nearestEnemyInRowAhead(d.row, d.x + DEF_W * 0.25);
+    if (!target) continue;
+
+    if (t - d.lastShot >= d.fireRate) {
+      d.lastShot = t;
+      projectiles.push({
+        row: d.row,
+        x: d.x + DEF_W * 0.35,
+        y: d.y,
+        r: PEA_R,
+        speed: PEA_SPEED,
+        damage: d.damage,
+      });
+    }
+  }
+}
+
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.x += p.speed * dt;
+
+    let hitEnemyIndex = -1;
+    for (let j = 0; j < enemies.length; j++) {
+      const e = enemies[j];
+      if (e.row !== p.row) continue;
+
+      const ex1 = e.x - ENEMY_W / 2;
+      const ex2 = e.x + ENEMY_W / 2;
+      const ey1 = e.y - ENEMY_H / 2;
+      const ey2 = e.y + ENEMY_H / 2;
+
+      const px = p.x;
+      const py = p.y;
+
+      if (px >= ex1 && px <= ex2 && py >= ey1 && py <= ey2) {
+        hitEnemyIndex = j;
+        break;
+      }
+    }
+
+    if (hitEnemyIndex !== -1) {
+      enemies[hitEnemyIndex].hp -= p.damage;
+      projectiles.splice(i, 1);
+      continue;
+    }
+
+    if (p.x > WIDTH + 20) projectiles.splice(i, 1);
+  }
+}
+
+function cleanupEnemies() {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    if (enemies[i].hp <= 0) enemies.splice(i, 1);
+  }
+}
 
 function update(dt) {
   spawnTimer += dt;
@@ -198,6 +285,11 @@ function update(dt) {
 
   sun += dt * 3;
   if (sun > 999) sun = 999;
+
+  const t = nowSeconds();
+  updateDefenders(dt, t);
+  updateProjectiles(dt);
+  cleanupEnemies();
 }
 
 function renderHud() {
@@ -278,7 +370,7 @@ function renderEnemies() {
 
     const barW = ENEMY_W;
     const barH = 6;
-    const hp01 = Math.max(0, Math.min(1, e.hp / 100));
+    const hp01 = Math.max(0, Math.min(1, e.hp / e.maxHp));
     const bx = e.x - barW / 2;
     const by = e.y - ENEMY_H / 2 - 10;
 
@@ -291,12 +383,22 @@ function renderEnemies() {
   }
 }
 
+function renderProjectiles() {
+  for (const p of projectiles) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = "#a6ff7a";
+    ctx.fill();
+  }
+}
+
 function render() {
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   renderHud();
   drawGrid();
   renderDefenders();
   renderEnemies();
+  renderProjectiles();
   renderGhost();
 }
 
