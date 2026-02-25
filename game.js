@@ -28,6 +28,8 @@ const DEF_H = CELL_H * 0.75;
 const PEA_R = 6;
 const PEA_SPEED = 420;
 
+const HOUSE_X = 10;
+
 let spawnEvery = 1.8;
 let spawnTimer = 0;
 
@@ -42,8 +44,9 @@ const cardState = new Map(CARDS.map((c) => [c.id, { lastUsed: -Infinity }]));
 let selectedCardId = null;
 
 let lastTs = performance.now();
-
 const mouse = { x: 0, y: 0 };
+
+let gameState = "playing";
 
 function rowCenterY(row) {
   return HUD_H + row * CELL_H + CELL_H / 2;
@@ -67,6 +70,12 @@ function drawGrid() {
     ctx.lineTo(WIDTH, HUD_H + r * CELL_H);
     ctx.stroke();
   }
+
+  ctx.strokeStyle = "#555";
+  ctx.beginPath();
+  ctx.moveTo(HOUSE_X, HUD_H);
+  ctx.lineTo(HOUSE_X, HEIGHT);
+  ctx.stroke();
 }
 
 function spawnEnemy() {
@@ -75,9 +84,13 @@ function spawnEnemy() {
     row,
     x: WIDTH + ENEMY_W / 2,
     y: rowCenterY(row),
-    hp: 100,
-    maxHp: 100,
+    hp: 120,
+    maxHp: 120,
     speed: 55 + Math.random() * 20,
+    biteEvery: 0.65,
+    biteDamage: 22,
+    biteTimer: 0,
+    targetKey: null,
   });
 }
 
@@ -121,20 +134,21 @@ function placeDefender(cardId, row, col) {
     id: cardId,
     row,
     col,
+    key: `${row}:${col}`,
     x: colCenterX(col),
     y: rowCenterY(row),
   };
 
   if (cardId === "blocker") {
-    defenders.push({ ...base, hp: 300, maxHp: 300 });
+    defenders.push({ ...base, hp: 320, maxHp: 320 });
     return true;
   }
 
   if (cardId === "shooter") {
     defenders.push({
       ...base,
-      hp: 140,
-      maxHp: 140,
+      hp: 160,
+      maxHp: 160,
       fireRate: 1.0,
       lastShot: -Infinity,
       damage: 20,
@@ -176,6 +190,17 @@ canvas.addEventListener("mousedown", (e) => {
   const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
   const my = (e.clientY - rect.top) * (canvas.height / rect.height);
 
+  if (gameState !== "playing") {
+    gameState = "playing";
+    enemies.length = 0;
+    defenders.length = 0;
+    projectiles.length = 0;
+    sun = 100;
+    selectedCardId = null;
+    spawnTimer = 0;
+    return;
+  }
+
   const c = cardAt(mx, my);
   if (c) {
     selectedCardId = selectedCardId === c.id ? null : c.id;
@@ -209,7 +234,7 @@ function nearestEnemyInRowAhead(row, xMin) {
   return best;
 }
 
-function updateDefenders(dt, t) {
+function updateDefenders(t) {
   for (const d of defenders) {
     if (d.id !== "shooter") continue;
 
@@ -245,10 +270,7 @@ function updateProjectiles(dt) {
       const ey1 = e.y - ENEMY_H / 2;
       const ey2 = e.y + ENEMY_H / 2;
 
-      const px = p.x;
-      const py = p.y;
-
-      if (px >= ex1 && px <= ex2 && py >= ey1 && py <= ey2) {
+      if (p.x >= ex1 && p.x <= ex2 && p.y >= ey1 && p.y <= ey2) {
         hitEnemyIndex = j;
         break;
       }
@@ -264,32 +286,91 @@ function updateProjectiles(dt) {
   }
 }
 
-function cleanupEnemies() {
+function findFrontDefenderForEnemy(e) {
+  let best = null;
+  let bestDx = Infinity;
+
+  for (const d of defenders) {
+    if (d.row !== e.row) continue;
+
+    const dx = e.x - d.x;
+    if (dx < 0) continue;
+
+    if (dx < bestDx) {
+      bestDx = dx;
+      best = d;
+    }
+  }
+
+  return best;
+}
+
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return (
+    ax < bx + bw &&
+    ax + aw > bx &&
+    ay < by + bh &&
+    ay + ah > by
+  );
+}
+
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    const target = findFrontDefenderForEnemy(e);
+
+    if (target) {
+      const enemyX = e.x - ENEMY_W / 2;
+      const enemyY = e.y - ENEMY_H / 2;
+      const defX = target.x - DEF_W / 2;
+      const defY = target.y - DEF_H / 2;
+
+      const touching = rectsOverlap(enemyX, enemyY, ENEMY_W, ENEMY_H, defX, defY, DEF_W, DEF_H);
+
+      if (touching) {
+        e.biteTimer += dt;
+        while (e.biteTimer >= e.biteEvery) {
+          e.biteTimer -= e.biteEvery;
+          target.hp -= e.biteDamage;
+        }
+        continue;
+      }
+    }
+
+    e.biteTimer = 0;
+    e.x -= e.speed * dt;
+
+    if (e.x - ENEMY_W / 2 <= HOUSE_X) {
+      gameState = "gameOver";
+    }
+  }
+}
+
+function cleanup() {
+  for (let i = defenders.length - 1; i >= 0; i--) {
+    if (defenders[i].hp <= 0) defenders.splice(i, 1);
+  }
   for (let i = enemies.length - 1; i >= 0; i--) {
     if (enemies[i].hp <= 0) enemies.splice(i, 1);
   }
 }
 
 function update(dt) {
+  if (gameState !== "playing") return;
+
   spawnTimer += dt;
   while (spawnTimer >= spawnEvery) {
     spawnTimer -= spawnEvery;
     spawnEnemy();
   }
 
-  for (let i = enemies.length - 1; i >= 0; i--) {
-    const en = enemies[i];
-    en.x -= en.speed * dt;
-    if (en.x < -ENEMY_W) enemies.splice(i, 1);
-  }
-
   sun += dt * 3;
   if (sun > 999) sun = 999;
 
   const t = nowSeconds();
-  updateDefenders(dt, t);
+  updateDefenders(t);
   updateProjectiles(dt);
-  cleanupEnemies();
+  updateEnemies(dt);
+  cleanup();
 }
 
 function renderHud() {
@@ -327,7 +408,7 @@ function renderHud() {
 }
 
 function renderGhost() {
-  if (!selectedCardId) return;
+  if (!selectedCardId || gameState !== "playing") return;
   const tile = tileFromMouse(mouse.x, mouse.y);
   if (!tile) return;
   const occupied = !!defenderAt(tile.row, tile.col);
@@ -343,9 +424,7 @@ function renderGhost() {
 
 function renderDefenders() {
   for (const d of defenders) {
-    if (d.id === "blocker") ctx.fillStyle = "#d6b07b";
-    else ctx.fillStyle = "#4aa3ff";
-
+    ctx.fillStyle = d.id === "blocker" ? "#d6b07b" : "#4aa3ff";
     ctx.fillRect(d.x - DEF_W / 2, d.y - DEF_H / 2, DEF_W, DEF_H);
 
     const barW = DEF_W;
@@ -392,6 +471,20 @@ function renderProjectiles() {
   }
 }
 
+function renderOverlay() {
+  if (gameState === "playing") return;
+
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "28px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  ctx.fillText("Game Over", WIDTH / 2 - 80, HEIGHT / 2 - 10);
+
+  ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  ctx.fillText("Click to restart", WIDTH / 2 - 70, HEIGHT / 2 + 20);
+}
+
 function render() {
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   renderHud();
@@ -400,6 +493,7 @@ function render() {
   renderEnemies();
   renderProjectiles();
   renderGhost();
+  renderOverlay();
 }
 
 function loop(ts) {
