@@ -1,115 +1,58 @@
+import { cardAt, renderHud, renderOverlay } from "./ui.js";
+import {
+  BREAK_DURATION,
+  CARDS,
+  COMPOST_CAP,
+  DEF_H,
+  DEF_W,
+  ENEMY_H,
+  ENEMY_W,
+  HEIGHT,
+  HOUSE_X,
+  HUD_H,
+  PASSIVE_INCOME_PER_SEC,
+  PEA_R,
+  PEA_SPEED,
+  ROWS,
+  START_COMPOST,
+  WAVES,
+  WIDTH,
+} from "./config.js";
+
+import { colCenterX, drawGrid, rowCenterY, tileFromMouse } from "./grid.js";
+import {
+  addCompost,
+  cardState,
+  defenders,
+  enemies,
+  gameState,
+  incWave,
+  phase,
+  phaseTimer,
+  popSpawnTimer,
+  projectiles,
+  resetGame,
+  resetPhaseTimers,
+  selectedCardId,
+  setGameState,
+  setPhase,
+  setSelectedCardId,
+  spendCompost,
+  spawnTimer,
+  sun,
+  tickPhaseTimer,
+  tickSpawnTimer,
+  waveIndex,
+} from "./state.js";
+
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-const WIDTH = 960;
-const HEIGHT = 540;
 canvas.width = WIDTH;
 canvas.height = HEIGHT;
 
-const COLS = 9;
-const ROWS = 5;
-
-const HUD_H = 72;
-const PLAY_H = HEIGHT - HUD_H;
-
-const CELL_W = WIDTH / COLS;
-const CELL_H = PLAY_H / ROWS;
-
-const enemies = [];
-const defenders = [];
-const projectiles = [];
-
-const ENEMY_W = CELL_W * 0.7;
-const ENEMY_H = CELL_H * 0.7;
-
-const DEF_W = CELL_W * 0.75;
-const DEF_H = CELL_H * 0.75;
-
-const PEA_R = 6;
-const PEA_SPEED = 420;
-
-const HOUSE_X = 10;
-
-let sun = 150;
-
-const PASSIVE_INCOME_PER_SEC = 4;
-
-const CARDS = [
-    { id: "blocker", name: "Hay Bale", cost: 50, cooldown: 0.5 },
-    { id: "shooter", name: "Pea Plant", cost: 100, cooldown: 0.8 },
-    { id: "generator", name: "Composter", cost: 75, cooldown: 0.8 },
-];
-
-const cardState = new Map(CARDS.map((c) => [c.id, { lastUsed: -Infinity }]));
-let selectedCardId = null;
-
 let lastTs = performance.now();
 const mouse = { x: 0, y: 0 };
-
-let gameState = "playing";
-
-const WAVES = [
-    { duration: 18, spawnEvery: 2.2, enemyHp: 110, speedMin: 50, speedMax: 65 },
-    { duration: 20, spawnEvery: 2.0, enemyHp: 125, speedMin: 52, speedMax: 70 },
-    { duration: 22, spawnEvery: 1.8, enemyHp: 140, speedMin: 55, speedMax: 75 },
-    { duration: 24, spawnEvery: 1.6, enemyHp: 160, speedMin: 58, speedMax: 80 },
-    { duration: 26, spawnEvery: 1.4, enemyHp: 185, speedMin: 60, speedMax: 86 },
-];
-
-const BREAK_DURATION = 6;
-
-let waveIndex = 0;
-let phase = "wave"; // 'wave' | 'break'
-let phaseTimer = 0;
-let spawnTimer = 0;
-
-function resetGame() {
-    enemies.length = 0;
-    defenders.length = 0;
-    projectiles.length = 0;
-
-    sun = 100;
-    selectedCardId = null;
-
-    waveIndex = 0;
-    phase = "wave";
-    phaseTimer = 0;
-    spawnTimer = 0;
-
-    for (const c of CARDS) cardState.get(c.id).lastUsed = -Infinity;
-
-    gameState = "playing";
-}
-
-function rowCenterY(row) {
-    return HUD_H + row * CELL_H + CELL_H / 2;
-}
-
-function colCenterX(col) {
-    return col * CELL_W + CELL_W / 2;
-}
-
-function drawGrid() {
-    ctx.strokeStyle = "#333";
-    for (let c = 0; c <= COLS; c++) {
-        ctx.beginPath();
-        ctx.moveTo(c * CELL_W, HUD_H);
-        ctx.lineTo(c * CELL_W, HEIGHT);
-        ctx.stroke();
-    }
-    for (let r = 0; r <= ROWS; r++) {
-        ctx.beginPath();
-        ctx.moveTo(0, HUD_H + r * CELL_H);
-        ctx.lineTo(WIDTH, HUD_H + r * CELL_H);
-        ctx.stroke();
-    }
-
-    ctx.strokeStyle = "#555";
-    ctx.beginPath();
-    ctx.moveTo(HOUSE_X, HUD_H);
-    ctx.lineTo(HOUSE_X, HEIGHT);
-    ctx.stroke();
-}
 
 function currentWave() {
     return WAVES[Math.min(waveIndex, WAVES.length - 1)];
@@ -129,14 +72,6 @@ function spawnEnemy() {
         biteDamage: 22,
         biteTimer: 0,
     });
-}
-
-function tileFromMouse(mx, my) {
-    if (my < HUD_H) return null;
-    const col = Math.floor(mx / CELL_W);
-    const row = Math.floor((my - HUD_H) / CELL_H);
-    if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return null;
-    return { row, col };
 }
 
 function defenderAt(row, col) {
@@ -205,26 +140,6 @@ function placeDefender(cardId, row, col) {
     }
 
     return false;
-}
-
-function cardRects() {
-    const pad = 12;
-    const w = 150;
-    const h = HUD_H - pad * 2;
-    const y = pad;
-    const res = [];
-    for (let i = 0; i < CARDS.length; i++) {
-        const x = pad + i * (w + 10);
-        res.push({ ...CARDS[i], x, y, w, h });
-    }
-    return res;
-}
-
-function cardAt(mx, my) {
-    for (const r of cardRects()) {
-        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) return r;
-    }
-    return null;
 }
 
 canvas.addEventListener("mousemove", (e) => {
@@ -335,7 +250,7 @@ function updateGenerators(dt) {
     d.produceTimer += dt;
     while (d.produceTimer >= d.produceEvery) {
       d.produceTimer -= d.produceEvery;
-      sun = Math.min(999, sun + d.produceAmount);
+      sun = Math.min(COMPOST_CAP, sun + d.produceAmount);
     }
   }
 }
@@ -405,7 +320,7 @@ function updateWaves(dt) {
     }
 
     phaseTimer += dt;
-    sun = Math.min(999, sun + 60);
+    sun = Math.min(COMPOST_CAP, sun + 60);
 
     if (phase === "wave") {
         const w = currentWave();
@@ -426,7 +341,7 @@ function updateWaves(dt) {
             phaseTimer = 0;
             spawnTimer = 0;
             waveIndex += 1;
-            sun = Math.min(999, sun + 60);
+            sun = Math.min(COMPOST_CAP, sun + 60);
         }
     }
 }
@@ -435,7 +350,7 @@ function update(dt) {
     if (gameState !== "playing") return;
 
     sun += dt * PASSIVE_INCOME_PER_SEC;
-    if (sun > 999) sun = 999;
+    if (sun > COMPOST_CAP) sun = COMPOST_CAP;
 
     updateWaves(dt);
 
@@ -446,45 +361,6 @@ function update(dt) {
     updateProjectiles(dt);
     updateEnemies(dt);
     cleanup();
-}
-
-function renderHud() {
-    ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(0, 0, WIDTH, HUD_H);
-
-    ctx.fillStyle = "#e6e6e6";
-    ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    ctx.fillText(`Compost: ${Math.floor(sun)}`, WIDTH - 160, 28);
-
-    const waveText = waveIndex < WAVES.length ? `Wave ${waveIndex + 1}/${WAVES.length}` : `Finale`;
-    const phaseText = phase === "wave" ? "Fighting" : "Preparing";
-    ctx.fillStyle = "#bdbdbd";
-    ctx.fillText(`${waveText} — ${phaseText}`, WIDTH - 260, 52);
-
-    for (const r of cardRects()) {
-        const selected = r.id === selectedCardId;
-        const usable = canUseCard(r);
-
-        ctx.fillStyle = selected ? "#2b2b2b" : "#242424";
-        ctx.fillRect(r.x, r.y, r.w, r.h);
-
-        ctx.strokeStyle = selected ? "#e6e6e6" : "#3a3a3a";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(r.x, r.y, r.w, r.h);
-        ctx.lineWidth = 1;
-
-        ctx.fillStyle = "#e6e6e6";
-        ctx.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-        ctx.fillText(r.name, r.x + 10, r.y + 22);
-
-        ctx.fillStyle = "#bdbdbd";
-        ctx.fillText(`Cost: ${r.cost}`, r.x + 10, r.y + 44);
-
-        if (!usable) {
-            ctx.fillStyle = "rgba(0,0,0,0.45)";
-            ctx.fillRect(r.x, r.y, r.w, r.h);
-        }
-    }
 }
 
 function renderGhost() {
@@ -507,6 +383,8 @@ function renderDefenders() {
         if (d.id === "blocker") ctx.fillStyle = "#d6b07b";
         else if (d.id === "shooter") ctx.fillStyle = "#4aa3ff";
         else ctx.fillStyle = "#ffd36a";
+
+        ctx.fillRect(d.x - DEF_W / 2, d.y - DEF_H / 2, DEF_W, DEF_H);
         
         const barW = DEF_W;
         const barH = 6;
@@ -552,31 +430,15 @@ function renderProjectiles() {
     }
 }
 
-function renderOverlay() {
-    if (gameState === "playing") return;
-
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0, 0, WIDTH, HEIGHT);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "28px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-
-    const title = gameState === "victory" ? "Victory" : "Game Over";
-    ctx.fillText(title, WIDTH / 2 - (title === "Victory" ? 55 : 80), HEIGHT / 2 - 10);
-
-    ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    ctx.fillText("Click to restart", WIDTH / 2 - 70, HEIGHT / 2 + 20);
-}
-
 function render() {
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
-    renderHud();
-    drawGrid();
+    renderHud(ctx, { compost: sun, selectedCardId, canUseCard, waveIndex, phase });
+    drawGrid(ctx);
     renderDefenders();
     renderEnemies();
     renderProjectiles();
     renderGhost();
-    renderOverlay();
+    renderOverlay(ctx, gameState)
 }
 
 function loop(ts) {

@@ -8,4 +8,6 @@ height:100vh;
 }
 canvas{
 background:#111;
+width: min(960px, 100vw);
+height: auto;
 }
