@@ -44,6 +44,7 @@ import {
   tickSpawnTimer,
   waveIndex,
 } from "./state.js";
+import { renderProjectiles, updateProjectiles } from "./entities/projectile.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -91,7 +92,7 @@ function canUseCard(card) {
 function useCard(card) {
     const st = cardState.get(card.id);
     st.lastUsed = nowSeconds();
-    sun -= card.cost;
+    spendCompost(card.cost);
 }
 
 function placeDefender(cardId, row, col) {
@@ -160,7 +161,7 @@ canvas.addEventListener("mousedown", (e) => {
 
     const c = cardAt(mx, my);
     if (c) {
-        selectedCardId = selectedCardId === c.id ? null : c.id;
+        setSelectedCardId(selectedCardId === c.id ? null : c.id);
         return;
     }
 
@@ -170,11 +171,11 @@ canvas.addEventListener("mousedown", (e) => {
     if (!tile) return;
 
     const placed = placeDefender(selectedCardId, tile.row, tile.col);
-    if (placed) selectedCardId = null;
+    if (placed) setSelectedCardId(null);
 });
 
 window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") selectedCardId = null;
+    if (e.key === "Escape") setSelectedCardId(null);
 });
 
 function nearestEnemyInRowAhead(row, xMin) {
@@ -212,37 +213,6 @@ function updateDefenders(t) {
     }
 }
 
-function updateProjectiles(dt) {
-    for (let i = projectiles.length - 1; i >= 0; i--) {
-        const p = projectiles[i];
-        p.x += p.speed * dt;
-
-        let hitEnemyIndex = -1;
-        for (let j = 0; j < enemies.length; j++) {
-            const e = enemies[j];
-            if (e.row !== p.row) continue;
-
-            const ex1 = e.x - ENEMY_W / 2;
-            const ex2 = e.x + ENEMY_W / 2;
-            const ey1 = e.y - ENEMY_H / 2;
-            const ey2 = e.y + ENEMY_H / 2;
-
-            if (p.x >= ex1 && p.x <= ex2 && p.y >= ey1 && p.y <= ey2) {
-                hitEnemyIndex = j;
-                break;
-            }
-        }
-
-        if (hitEnemyIndex !== -1) {
-            enemies[hitEnemyIndex].hp -= p.damage;
-            projectiles.splice(i, 1);
-            continue;
-        }
-
-        if (p.x > WIDTH + 20) projectiles.splice(i, 1);
-    }
-}
-
 function updateGenerators(dt) {
   for (const d of defenders) {
     if (d.id !== "generator") continue;
@@ -250,7 +220,7 @@ function updateGenerators(dt) {
     d.produceTimer += dt;
     while (d.produceTimer >= d.produceEvery) {
       d.produceTimer -= d.produceEvery;
-      sun = Math.min(COMPOST_CAP, sun + d.produceAmount);
+      addCompost(d.produceAmount);
     }
   }
 }
@@ -300,7 +270,7 @@ function updateEnemies(dt) {
         e.biteTimer = 0;
         e.x -= e.speed * dt;
 
-        if (e.x - ENEMY_W / 2 <= HOUSE_X) gameState = "gameOver";
+        if (e.x - ENEMY_W / 2 <= HOUSE_X) setGameState('gameOver');
     }
 }
 
@@ -315,33 +285,31 @@ function cleanup() {
 
 function updateWaves(dt) {
     if (waveIndex >= WAVES.length) {
-        if (enemies.length === 0) gameState = "victory";
+        if (enemies.length === 0) setGameState('victory');
         return;
     }
 
-    phaseTimer += dt;
-    sun = Math.min(COMPOST_CAP, sun + 60);
+    tickPhaseTimer(dt);
+    addCompost(60)
 
     if (phase === "wave") {
         const w = currentWave();
-        spawnTimer += dt;
+        tickSpawnTimer(dt);
         while (spawnTimer >= w.spawnEvery) {
-            spawnTimer -= w.spawnEvery;
+            popSpawnTimer(w.spawnEvery)
             spawnEnemy();
         }
 
         if (phaseTimer >= w.duration) {
-            phase = "break";
-            phaseTimer = 0;
-            spawnTimer = 0;
+            setPhase('break');
+            resetPhaseTimers()
         }
     } else {
         if (phaseTimer >= BREAK_DURATION) {
-            phase = "wave";
-            phaseTimer = 0;
-            spawnTimer = 0;
-            waveIndex += 1;
-            sun = Math.min(COMPOST_CAP, sun + 60);
+            setPhase('wave');
+            resetPhaseTimers()
+            incWave();
+            addCompost(60);
         }
     }
 }
@@ -349,8 +317,7 @@ function updateWaves(dt) {
 function update(dt) {
     if (gameState !== "playing") return;
 
-    sun += dt * PASSIVE_INCOME_PER_SEC;
-    if (sun > COMPOST_CAP) sun = COMPOST_CAP;
+    addCompost(dt * PASSIVE_INCOME_PER_SEC);
 
     updateWaves(dt);
 
@@ -421,14 +388,14 @@ function renderEnemies() {
     }
 }
 
-function renderProjectiles() {
-    for (const p of projectiles) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = "#a6ff7a";
-        ctx.fill();
-    }
-}
+// function renderProjectiles() {
+//     for (const p of projectiles) {
+//         ctx.beginPath();
+//         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+//         ctx.fillStyle = "#a6ff7a";
+//         ctx.fill();
+//     }
+// }
 
 function render() {
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
